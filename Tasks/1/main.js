@@ -12,10 +12,18 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const video = document.createElement("video");
-video.src = "./video/video.mp4";
-video.loop = true;
+video.autoplay = true;
 video.muted = true;
-video.play();
+video.playsInline = true;
+
+navigator.mediaDevices.getUserMedia({ video: true })
+  .then((stream) => {
+    video.srcObject = stream;
+    video.play();
+  })
+  .catch((err) => {
+    console.error(err);
+  });
 
 const videoTexture = new THREE.VideoTexture(video);
 videoTexture.minFilter = THREE.LinearFilter;
