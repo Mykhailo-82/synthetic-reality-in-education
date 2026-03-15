@@ -7,7 +7,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const mindarThree = new MindARThree({
     container: document.body,
-    imageTargetSrc: "../../assets/panadol.mind",
+    imageTargetSrc: "./../../assets/iodomarine.mind",
   });
 
   const {renderer, scene, camera} = mindarThree;
