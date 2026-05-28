@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Керування роботом жестами</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/fingerpose@0.1.0/dist/fingerpose.min.js"></script>
+  <script src="https://unpkg.com/@tensorflow/tfjs-core@3.7.0/dist/tf-core.js"></script>
+  <script src="https://unpkg.com/@tensorflow/tfjs-converter@3.7.0/dist/tf-converter.js"></script>
+  <script src="https://unpkg.com/@tensorflow/tfjs-backend-webgl@3.7.0/dist/tf-backend-webgl.js"></script>
+  <script src="https://unpkg.com/@tensorflow-models/handpose@0.0.7/dist/handpose.js"></script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #1e1e1e; font-family: sans-serif; }
+    #container3d { position: fixed; inset: 0; }
+    #webcam {
+      position: fixed; bottom: 30px; left: 30px;
+      width: 240px; height: 180px; object-fit: cover;
+      border-radius: 12px; background: #000;
+      transform: scaleX(-1); z-index: 10;
+      border: 1px solid rgba(255,255,255,0.25);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    #gesture-label {
+      position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+      z-index: 10; color: rgba(255,255,255,0.9);
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(10px);
+      padding: 8px 22px; border-radius: 20px; font-size: 15px;
+      font-weight: 500; letter-spacing: 0.5px;
+      border: 1px solid rgba(255,255,255,0.15); pointer-events: none;
+    }
+    #camera-select {
+      position: fixed; top: 30px; right: 30px; z-index: 10;
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(10px);
+      color: #fff; border: 1px solid rgba(255,255,255,0.2);
+      padding: 6px 12px; border-radius: 8px; font-size: 12px;
+      cursor: pointer; outline: none; opacity: 0.8; transition: opacity 0.2s;
+    }
+    #camera-select:hover { opacity: 1; }
+    .back-link {
+      position: fixed; top: 30px; left: 30px; z-index: 11;
+      color: rgba(255,255,255,0.7); text-decoration: none; font-size: 13px;
+      background: rgba(0,0,0,0.5); backdrop-filter: blur(10px);
+      padding: 6px 14px; border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.2); transition: all 0.2s;
+    }
+    .back-link:hover { color: #fff; background: rgba(0,0,0,0.7); border-color: rgba(255,255,255,0.4); }
+  </style>
+</head>
+<body>
+
+  <a href="../../index.html" class="back-link">Меню</a>
+  <select id="camera-select"><option>Завантаження...</option></select>
+
+  <div id="container3d"></div>
+  <video id="webcam" autoplay playsinline muted></video>
+  <div id="gesture-label">Очікування жесту...</div>
+
+  <script>
+    const fp = window.fp;
+
+    const videoEl   = document.getElementById('webcam');
+    const selectEl  = document.getElementById('camera-select');
+    const labelEl   = document.getElementById('gesture-label');
+
+    let currentStream = null;
+    let detectionRunning = false;
+    let gestureEstimator;
+    let handposeModel;
+
+    let scene, camera, renderer, mixer;
+    let actions = {};
+    let activeAction = null;
+    const clock = new THREE.Clock();
+    
+    const GESTURE_MAP = {
+      thumbs_up: { anim: 'ThumbsUp', label: '👍 Лайк' },
+      victory:   { anim: 'Dance',    label: '✌️ Танець' },
+      wave_hand: { anim: 'Wave',     label: '✋ Привіт' },
+      fist:      { anim: 'Punch',    label: '✊ Удар' }
+    };
+
+    function init3D() {
+      const container = document.getElementById('container3d');
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x2d2d2d);
+
+      camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.25, 20);
+      camera.position.set(0, 1.8, 8.5);
+      camera.lookAt(0, 1.2, 0);
+
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      dirLight.position.set(3, 10, 10);
+      scene.add(dirLight);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      container.appendChild(renderer.domElement);
+
+      new THREE.GLTFLoader().load('./../../assets/models/RobotExpressive.glb', (gltf) => {
+        const box = new THREE.Box3().setFromObject(gltf.scene);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        
+        gltf.scene.position.set(-center.x, -center.y + size.y / 2, -center.z);
+        
+        scene.add(gltf.scene);
+        mixer = new THREE.AnimationMixer(gltf.scene);
+        
+        const clipNames = [];
+        gltf.animations.forEach(clip => {
+          actions[clip.name] = mixer.clipAction(clip);
+          clipNames.push(clip.name);
+        });
+
+        if (actions['Idle']) playAnim('Idle');
+        else if (clipNames.length > 0) playAnim(clipNames[0]);
+      });
+
+      window.addEventListener('resize', () => {
+        camera.aspect = innerWidth / innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+      });
+
+      (function loop() {
+        requestAnimationFrame(loop);
+        if (mixer) mixer.update(clock.getDelta());
+        renderer.render(scene, camera);
+      })();
+    }
+
+    function playAnim(name) {
+      if (!actions[name] || activeAction === actions[name]) return;
+      const next = actions[name];
+      next.reset().setLoop(THREE.LoopRepeat, Infinity).enabled = true;
+      if (activeAction) next.crossFadeFrom(activeAction, 0.3, true);
+      next.play();
+      activeAction = next;
+    }
+
+    function createFistGesture() {
+      const fist = new fp.GestureDescription('fist');
+      for (let finger of [fp.Finger.Thumb, fp.Finger.Index, fp.Finger.Middle, fp.Finger.Ring, fp.Finger.Pinky]) {
+        fist.addCurl(finger, fp.FingerCurl.FullCurl, 1.0);
+        fist.addCurl(finger, fp.FingerCurl.HalfCurl, 0.3);
+      }
+      return fist;
+    }
+
+    function createWaveGesture() {
+      const wave = new fp.GestureDescription('wave_hand');
+      for (let finger of [fp.Finger.Thumb, fp.Finger.Index, fp.Finger.Middle, fp.Finger.Ring, fp.Finger.Pinky]) {
+        wave.addCurl(finger, fp.FingerCurl.NoCurl, 1.0);
+      }
+      return wave;
+    }
+
+    function initGestureDetection() {
+      const knownGestures = [
+        fp.Gestures.ThumbsUpGesture,
+        fp.Gestures.VictoryGesture,
+        createWaveGesture(),
+        createFistGesture()
+      ];
+      gestureEstimator = new fp.GestureEstimator(knownGestures);
+    }
+
+    async function startDetectionLoop() {
+      if (!handposeModel || !gestureEstimator || !videoEl.readyState) return;
+
+      async function detect() {
+        if (!detectionRunning || videoEl.paused || videoEl.ended) return;
+        try {
+          const predictions = await handposeModel.estimateHands(videoEl);
+          if (predictions.length > 0) {
+            const landmarks = predictions[0].landmarks;
+            const est = gestureEstimator.estimate(landmarks, 7.0);
+
+            if (est.gestures && est.gestures.length > 0) {
+              const best = est.gestures.reduce((a, b) => a.confidence > b.confidence ? a : b);
+              const entry = GESTURE_MAP[best.name];
+              if (entry) {
+                playAnim(entry.anim);
+                labelEl.textContent = entry.label;
+              } else {
+                playAnim('Idle');
+                labelEl.textContent = 'Очікування...';
+              }
+            } else {
+              playAnim('Idle');
+              labelEl.textContent = 'Очікування...';
+            }
+          } else {
+            playAnim('Idle');
+            labelEl.textContent = 'Очікування...';
+          }
+        } catch (e) {
+          console.warn('Помилка детекції:', e);
+        }
+        requestAnimationFrame(detect);
+      }
+      detect();
+    }
+
+    function stopStream() {
+      detectionRunning = false;
+      if (currentStream) {
+        currentStream.getTracks().forEach(t => t.stop());
+        currentStream = null;
+      }
+    }
+
+    async function startStream(deviceId) {
+      stopStream();
+      const constraints = deviceId
+        ? { video: { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } } }
+        : { video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } };
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        currentStream = stream;
+        videoEl.srcObject = stream;
+        await new Promise(r => { videoEl.onloadedmetadata = r; });
+        await videoEl.play();
+        if (!handposeModel) {
+          handposeModel = await handpose.load();
+        }
+        detectionRunning = true;
+        startDetectionLoop();
+      } catch (e) {
+        console.error('Помилка доступу до камери:', e);
+      }
+    }
+
+    async function populateCameras() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      const activeId = currentStream?.getVideoTracks()[0]?.getSettings()?.deviceId ?? null;
+      selectEl.innerHTML = '';
+      cams.forEach((d, i) => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.text = d.label || `Камера ${i + 1}`;
+        opt.selected = d.deviceId === activeId;
+        selectEl.appendChild(opt);
+      });
+      if (!selectEl.value && cams.length) selectEl.value = cams[0].deviceId;
+    }
+
+    selectEl.addEventListener('change', () => startStream(selectEl.value));
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      init3D();
+      initGestureDetection();
+      await startStream(null);
+      await populateCameras();
+    });
+  </script>
+</body>
+</html>

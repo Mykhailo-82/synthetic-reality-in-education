@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Завдання 14</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+  <video id="webcam" autoplay playsinline muted></video>
+  <canvas id="overlay-canvas"></canvas>
+
+  <div id="ui">
+    <div id="status">Завантаження моделі...</div>
+    <div id="result"></div>
+  </div>
+
+  <script src="./main.js"></script>
+</body>
+</html>
