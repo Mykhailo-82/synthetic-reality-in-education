@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="uk">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Лабораторна 1</title>
+  <link rel="stylesheet" href="styles.css">
+
+  <script type="importmap">
+      {
+        "imports": {
+          "three/addons/":     "https://cdn.jsdelivr.net/npm/three@0.151.3/examples/jsm/",
+          "three":              "https://unpkg.com/three@0.151.3/build/three.module.js",
+          "mindar-image-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"
+        }
+      }
+    </script>
+  <script type="module" src="main.js" defer></script>
+</head>
+
+<body>
+
+  <div class="toast-notification" id="toast">Пошту скопійовано в буфер обміну!</div>
+
+  <div class="welcome-screen" id="start-screen">
+    <h1 class="welcome-title">AR Візитівка</h1>
+    <p class="welcome-instruction">Наведіть камеру на маркер після запуску.</p>
+    <img class="marker-preview" src="./marker/marker.png" alt="Маркер для сканування">
+    <button class="action-button" id="startButton">Запустити WebAR та Відео</button>
+  </div>
+
+  <div class="ar-viewport" id="mind-ar-container"></div>
+
+</body>
+
+</html>
